@@ -1,15 +1,21 @@
 # gsdecode
 ### A toy implementation of a substitution cipher solver using Gibbs(ish) sampling.
 
-This is a gibbs sampler over substitution ciphers. Each cipher is represented as a permutation of the available characters, and the sampler walks over the space of character permutations. The goodness-of-fit for each cipher is calculated using the naive Bayes log probabiliy of the n-grams generated when the cipher is used to decode a given ciphertext. For missing n-grams, it steps downward, substituting the probability for the required `n-1`-gram. It continues stepping down until `n` is 1.
+This is a Gibbs sampler over substitution ciphers. Each cipher is represented as a permutation of the available characters, and the sampler walks over the space of character permutations.
+
+Practically speaking, this is useless, since nobody uses substitution ciphers for serious encryption. But it provides an interesting starting point for thinking about how to discern likely words from unlikely words based on known character n-gram distributions.
+
+### Algorithm details
+
+The goodness-of-fit for each cipher is calculated using the naive Bayes log probabiliy of the n-grams generated when the cipher is used to decode a given ciphertext. For missing n-grams, it steps downward, substituting the probability for the required `n-1`-gram. It continues stepping down until `n` is 1.
 
 Based on the evaluations that result, it picks a pair of characters in the cipher to swap, producing a new permutation. Character swaps that appear to produce better results are more likely to be chosen, but all possible swaps are considered and assigned a non-zero probability.
 
-This doesn't appear to represent a well-formed probability distribution -- not surprisingly! -- so it doesn't behave as nicely as a Gibbs Sampler based on a legitimate probabilistic derivation. But I'm not equipped to produce such a derivation, so instead, I use some tricks to improve performance. 
+This doesn't appear to represent a well-formed probability distribution -- not surprisingly! -- so it doesn't behave as nicely as a Gibbs Sampler based on a legitimate probabilistic derivation. But I'm not equipped to produce such a derivation, so instead, this use some tricks to improve performance. 
 
-1. I hill-climb from time to time, taking the _best_ result every time, instead of chosing a result using fair sampling. This speeds up convergence to reasonable results, and can quickly decrypt longer ciphertexts. But it is prone to getting stuck in bad local optima.
+1. It hill-climbs from time to time, taking the _best_ result every time, instead of chosing a result using fair sampling. This speeds up convergence to reasonable results, and can quickly decrypt longer ciphertexts. But it also tends to get stuck in bad local optima.
 
-2. To get out of bad local optima, I occasionally take a completely random result. This can have positive or negative results, depending on whether the local optimum is a good one or not, but on average, it ensures that most plausible areas of the permutation space are explored.
+2. To get out of bad local optima, this occasionally takes a completely random result. That can have positive or negative results, depending on whether the local optimum is a good one or not, but on average, it ensures that most plausible areas of the cipher permutation space are explored.
 
 This script runs very slowly on standard Python. I recommend running it with Pypy instead.
 
@@ -21,7 +27,7 @@ This works with texts in any language, assuming you have a large enough model te
 
 The `mysteries` directory contains several hard problems, including a few English lipograms and other phrases with odd distributional propeties. These really challenge the engine. It mostly manages to get close to the correct solutions, but it desperately wants `e` to appear, and often decides that newline characters are actually upper- or lowercase `e`s.
 
-### Output Example:
+### Output Example
 
 ```
 $ cat mysteries/mystery5.txt 
