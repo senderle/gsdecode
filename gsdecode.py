@@ -215,10 +215,18 @@ class GibbsSampler(object):
                           xrange(0, len(decoded_string) - 4)]
         p = 0
 
-        for decoded_ng in decoded_ngrams:       # These are reweighting terms
-            if decoded_ng in quintgram_p:       # that push the sampler to
-                p += quintgram_p[decoded_ng]    # accept unknown terms.
-            elif decoded_ng[1:] in quadgram_p:  # vvvvvvv
+        # Next character probabilites. Here, recall that log probabilities
+        # are negative so additions and multiplications make values
+        # smaller. The multipliers here ensure that when we have only
+        # low-n-gram information available, we don't over-weight that
+        # information. More intelligent approaches might substitute
+        # probabilities based on character class-grams; for example,
+        # we might reasonably guess that a character following three
+        # vowels is highly unlikely to be a vowel itself.
+        for decoded_ng in decoded_ngrams:
+            if decoded_ng in quintgram_p:
+                p += quintgram_p[decoded_ng]
+            elif decoded_ng[1:] in quadgram_p:
                 p += quadgram_p[decoded_ng[1:]] * 5.0 / 4
             elif decoded_ng[2:] in trigram_p:
                 p += trigram_p[decoded_ng[2:]] * 5.0 / 3
