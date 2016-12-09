@@ -3,7 +3,7 @@
 
 This is a Gibbs sampler over substitution ciphers. Each cipher is represented as a permutation of the available characters, and the sampler walks over the space of character permutations.
 
-Practically speaking, this is useless, since nobody uses substitution ciphers for serious encryption. But it provides an interesting starting point for thinking about how to discern likely words from unlikely words based on known character n-gram distributions.
+Practically speaking, this is useless, since nobody uses substitution ciphers for serious encryption. But it provides an interesting starting point for thinking about how to discern likely words from unlikely words based on known character n-gram distributions. I'm thinking about adapting portions of it for de-noising OCR. It wouldn't "normalize," but it might be good at stripping out irredeemably mangled words and pure line noise, while tolerating variant spellings and more isolated OCR errors. More intelligent normlizers could quickly process the rest.
 
 ### Algorithm details
 
