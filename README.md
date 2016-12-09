@@ -20,3 +20,32 @@ To see a simple example of its output, run
 This works with texts in any language, assuming you have a large enough model text (for calculating n-gram probabilities) and know the probable language of the ciphertext. `mysteries` contains a range of different plain texts, which are encrypted using a randomly-chosen cipher before running the sampler. (To use this on "real" encrypted texts you'd need to tweak the script, but that's OK, because nobody seriously uses substitution ciphers for encryption anyway. This is just for fun!)
 
 The `mysteries` directory contains several hard problems, including a few English lipograms and other phrases with odd distributional propeties. These really challenge the engine. It mostly manages to get close to the correct solutions, but it desperately wants `e` to appear, and often decides that newline characters are actually upper- or lowercase `e`s.
+
+### Output Example:
+
+```
+$ cat mysteries/mystery5.txt 
+I shoot the hippopotamous with bullets made of platinum
+because if I use leaden ones his hide is sure to flatten em.
+
+$ pypy gsdecode.py -m models/rasselas.ascii.upper.txt -d 10 -c 100 mysteries/mystery5.txt 
+```
+[... Many lines of output here... ]
+
+Final output:
+
+```
+Hill climbing key: 
+
+['w', 'o', "'", 'h', 'X', ';', 'J', '!', 'P', 'r', 'p', 'u', '"', 'A', 'f', 'q', 'n', 'v', 'Y', 'L', 'V', 'D', 'z', 'Z', 'H', '\n', 's', 'a', 'b', 'l', ',', 'G', 'K', 'C', 'O', 'M', 'N', 'W', 'x', '_', 'S', 'Q', 'y', ' ', 'g', 'R', 'j', ')', 'T', 'U', 'e', 'E', 'I', 'm', '.', 'k', 'c', '-', 'B', 'i', 'd', ':', '?', 'F', '(', 't']
+
+Hill climbing key output: 
+
+y shoot the hippopotamous with rullets made of platinum
+recause if y use leaden ones his hide is sube to flatten em,
+
+
+Hill climbing key log probability, total and per character: 
+
+-274.614803669 -2.34713507409
+```
