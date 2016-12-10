@@ -9,13 +9,13 @@ Practically speaking, this is useless, since nobody uses substitution ciphers fo
 
 The goodness-of-fit for each cipher is calculated using the naive Bayes log probability of the n-grams generated when the cipher is used to decode a given ciphertext. For missing n-grams, it steps downward, substituting the probability for the required `n-1`-gram. It continues stepping down until `n` is 1.
 
-Based on the evaluations that result, it picks a pair of characters in the cipher to swap, producing a new permutation. Character swaps that appear to produce better results are more likely to be chosen, but all possible swaps are considered and assigned a non-zero probability.
+Based on the evaluations observed for each possible pair, it picks one pair in the cipher to swap, producing a new permutation. Character swaps that appear to produce better results are more likely to be chosen, but all possible swaps are considered and assigned a non-zero probability.
 
 This doesn't appear to represent a well-formed probability distribution -- not surprisingly! -- so it doesn't behave as nicely as a Gibbs Sampler based on a legitimate probabilistic derivation. But I'm not equipped to produce such a derivation, so instead, this uses some tricks to improve performance:
 
-1. It hill-climbs from time to time, taking the _best_ result every time, instead of choosing a result using fair sampling. This speeds up convergence to reasonable results, and can quickly decrypt longer ciphertexts. But it also tends to get stuck in bad local optima.
+1. It hill-climbs from time to time, taking the _best_ result every time, instead of choosing a result using fair sampling. This speeds up convergence to a reasonable area of cipher permutation space, and can quickly decrypt longer ciphertexts. But it also tends to get stuck in bad local optima.
 
-2. To get out of bad local optima, this occasionally takes a completely random result. That can have positive or negative results, depending on whether the local optimum is a good one or not, but on average, it ensures that most plausible areas of the cipher permutation space are explored.
+2. To get out of bad local optima, this occasionally chooses a completely random pair to swap. That can have positive or negative results, depending on whether the local optimum is a good one or not, but on average, it ensures that most plausible areas of the cipher permutation space are explored.
 
 This script runs very slowly on standard Python. I recommend running it with Pypy instead.
 
