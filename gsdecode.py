@@ -1,4 +1,4 @@
-#!/usr/local/bin/pypy
+#!/usr/local/bin/pypy3
 
 import math
 import collections
@@ -9,17 +9,45 @@ import string
 import argparse
 import textwrap
 import os
+import gzip
+import json
 
-def load_text(fn, space_pad=3):
-    with open(fn) as datafile:
-        text_raw = datafile.read()
-        rex = '[^{}]'.format(string.printable)
-        text = re.sub(rex, ' ', text_raw)
-        return text
+def load_saved_model(filename):
+    with gzip.open(filename, 'rt') as infile:
+        ngram_probabilities = json.load(infile)
+    return ngram_probabilities
+
+def load_text(filename):
+    return list(iter_text(filename))
+
+def iter_text(filename):
+    if os.path.isdir(filename):
+        files = [os.path.join(filename, f) for f in os.listdir(filename)]
+        files = [f for f in files
+                 if f.endswith('.txt') and not os.path.isdir(f)]
+    else:
+        files = [filename]
+
+    for fn in files:
+        with open(fn) as datafile:
+            text_raw = datafile.read()
+            rex = '[^{}]'.format(string.printable)
+            text = re.sub(rex, ' ', text_raw)
+            yield text
 
 _space_rex = re.compile('\s+')
 def uniform_whitespace(text):
     return _space_rex.sub(' ', text)
+
+def strip_punctuation(text):
+    punct = string.punctuation
+    punct = punct.maketrans(punct, ' ' * len(punct))
+    return text.translate(punct)
+
+def strip_digits(text):
+    digits = '0123456789'
+    digits = digits.maketrans(digits, ' ' * len(digits))
+    return text.translate(digits)
 
 def get_ngram_probabilities(text, n):
     if n < 1:
@@ -83,47 +111,72 @@ def count_ngrams(seq, n=3):
     ngrams = (seq[i:i + n] for i in range(len(seq) - n + 1))
     return dict(collections.Counter(ngrams))
 
-def gibbs_probability(text, ngram_probabilities):
-    ngram_max = len(ngram_probabilities)
-
-    p = 0
-    string_end = len(text)
-    for end in range(ngram_max, string_end):
-        start = end - ngram_max
-        for ngp in ngram_probabilities:
-            ngram = text[start:end]
-            if ngram in ngp:
-                ngram_size = end - start
-                p += ngram_max * ngp[ngram] / ngram_size
-                break
-            start += 1
-    return p
-
 def token_probability(text, ngram_probabilities):
+    text = uniform_whitespace(text)
+    text = text.split()
+
     ngram_max = len(ngram_probabilities)
+    pvals = []
+    tokens = []
+    for raw_token in text:
+        # Add whitespace to mark beginning of token.
+        token = ' {}'.format(raw_token.strip().lower())
+        ngram_p = 0
+        for end in range(2, len(token) + 1):
+            start = max(0, end - ngram_max)
+            ngram_p += lookup_ngram(token[start:end], ngram_probabilities)
+        pvals.append(ngram_p)
+
+        # Remove initial space (but leave final space).
+        tokens.append(raw_token)
+
+    return [(t, p) for t, p in zip(tokens, pvals) if t.strip()]
+
+def stream_probability(text, ngram_probabilities):
     text = uniform_whitespace(text)
 
+    ngram_max = len(ngram_probabilities)
     tokens = []
     token = []
     pvals = []
-    p = 0
-    string_end = len(text)
-    for end in range(string_end):
-        start = end - ngram_max
-        for ngp in ngram_probabilities:
-            ngram = text[start:end]
-            if ngram in ngp:
-                ngram_size = end - start
-                p += ngram_max * ngp[ngram] / ngram_size
-                token.append(ngram[-1])
-                if ngram[-1] == ' ':
-                    pvals.append(p)
-                    p = 0
-                    tokens.append(''.join(token))
-                    token = []
-                break
-            start += 1
+    token_p = 0
+    for end in range(1, len(text)):
+        # Find the ngram. Add its log probability to the current token's
+        # log probability, and append the last character to the current token.
+        start = max(0, end - ngram_max)
+        ngram = text[start:end].lower()
+        token_p += lookup_ngram(ngram, ngram_probabilities)
+        last_c = text[end - 1]
+        token.append(last_c)
+
+        # If the current token is whitespace, start a new token.
+        # The `uniform_whitespace` call above should guarantee that all
+        # strings of whitespace have been collapsed to a single space.
+        if last_c == ' ':
+            pvals.append(token_p)
+            token_p = 0
+            tokens.append(''.join(token))
+            token = []
+
     return [(t, p) for t, p in zip(tokens, pvals) if t.strip()]
+
+def lookup_ngram(init_ngram, ngram_probabilities):
+    if not init_ngram:
+        return 0
+
+    ngram_max = len(init_ngram)
+
+    start = 0
+    for ngram_table in ngram_probabilities[-ngram_max:]:
+        ngram = init_ngram[start:]
+        if ngram in ngram_table:
+            return ngram_max * ngram_table[ngram] / len(ngram)
+        else:
+            start += 1
+
+    # If we get to this point, then the unigram itself is unkown. We
+    # arbitrarily assign it a moderate log probability of -2 * ngram_max
+    return -2.0 * ngram_max
 
 class GibbsSampler(object):
     def __init__(self, ngram_probabilities,
@@ -194,16 +247,6 @@ class GibbsSampler(object):
         print()
         print('{}, {}'.format(prob, prob_per_char))
         print()
-        # self.display_tokens(key)
-
-    def display_tokens(self, key):
-        text = ''.join(key[s] for s in self.coded_string)
-        token_p = token_probability(text, self.ngram_probabilities)
-        for token, p in token_p:
-            p = p / (len(token) + 2)
-            if p > -3.25:
-                print('{} {}'.format(token, p))
-        print()
 
     def key_from_samples(self, samples, key):
         # This picks a key given a colleciton of samples. But hill-climbing
@@ -226,9 +269,6 @@ class GibbsSampler(object):
         return [sample_key[x] for x in range(len(sample_key))]
 
     def maximize_key(self, key, max_prob=None):
-        print('Checking for better solutions using hill climbing...')
-        print()
-
         prob = self.gibbs_probability(key)
         if max_prob is None:
             max_prob = prob - 1
@@ -242,10 +282,6 @@ class GibbsSampler(object):
             for key_ix in range(len(key)):
                 self.hill_step(key_ix, offset, key)
             prob = self.gibbs_probability(key)
-            sys.stdout.write('\rHill climbing step {}'.format(i))
-            sys.stdout.flush()
-
-        self.display_key("Best hill climbing key", key)
 
         return max_prob, key
 
@@ -297,6 +333,20 @@ class GibbsSampler(object):
 
         key[start_ix], key[swap_ix] = key[swap_ix], key[start_ix]
 
+    # A slightly more correct (but possibly slower)
+    # calculation than the ones below.
+    def gibbs_probability(self, key):
+        ngram_p = self.ngram_probabilities
+        ngram_max = self.ngram_size
+        decoded_string = ''.join([key[c] for c in self.coded_string])
+
+        p = 0
+        string_end = len(decoded_string)
+        for end in range(1, string_end + 1):
+            start = max(0, end - ngram_max)
+            p += lookup_ngram(decoded_string[start:end], ngram_p)
+        return p
+
     def gibbs_probability_5grams(self, key):
         # A fast 5-gram benchmark for speeding up the gibbs probabilitiy
         # code below. The generic gibbs (below) is currently about 90%
@@ -331,7 +381,7 @@ class GibbsSampler(object):
                 p += unigram_p[decoded_ng[4:]] * 5.0
         return p
 
-    def gibbs_probability(self, key):
+    def gibbs_probability_original(self, key):
         ngram_p = self.ngram_probabilities
         ngram_max = self.ngram_size
         decoded_string = ''.join([key[c] for c in self.coded_string])
@@ -348,31 +398,6 @@ class GibbsSampler(object):
                     break
                 start += 1
         return p
-
-# Until I can make this a _pure cython_ function, there's no
-# point in compiling this. It's faster to just run the above
-# through pypy.
-
-    # def gibbs_probability_ngrams(self, key):
-    #     ngram_p = self.ngram_probabilities
-    #     decoded_string = ''.join([key[c] for c in self.coded_string])
-    #
-    #     cdef int ngram_max, string_end, start, end
-    #     cdef double p
-    #     ngram_max = self.ngram_size
-
-    #     p = 0
-    #     string_end = len(decoded_string)
-    #     for end in range(ngram_max, string_end):
-    #         start = end - ngram_max
-    #         for ngp in ngram_p:
-    #             ngram = decoded_string[start:end]
-    #             if ngram in ngp:
-    #                 ngram_size = end - start
-    #                 p += ngram_max * ngp[ngram] / (ngram_size)
-    #                 break
-    #             start += 1
-    #     return p
 
 def categorical_sample(probs):
     maxp = max(probs)
@@ -420,15 +445,20 @@ def init_key(model_ngrams, encoded_mystery):
     return key
 
 def decode(args):
-    model_texts = [load_text(fn) for fn in args.model_file]
-    model_text = ' '.join(model_texts)
-    ngram_probabilities = get_ngram_probabilities(model_text, args.ngram_size)
+    if args.model_text:
+        model_texts = [t for fn in args.model_text for t in load_text(fn)]
+        model_text = ' '.join(model_texts)
+        ngram_probabilities = get_ngram_probabilities(model_text,
+                                                      args.ngram_size)
+        chars = list(set(model_text))
+    else:
+        ngram_probabilities = load_saved_model(args.model_compiled)
+        chars = list(set(ngram_probabilities[-1]))
 
-    chars = list(set(model_text))
     random.shuffle(chars)
     code = {c: i for i, c in enumerate(chars)}
 
-    mystery = load_text(args.mystery)
+    mystery = load_text(args.mystery)[0]
 
     encoded_mystery = [code[c] for c in mystery]
 
@@ -448,40 +478,65 @@ def decode(args):
                            args.jump_probability)
     decoder.gibbs_cycle(encoded_mystery)
 
+def token_fit(probability, token, pad=0):
+    return (probability / (len(token) + pad), token)
+
 def clean(args):
-    model_text = [load_text(fn) for fn in args.model_file]
-    model_text = ' '.join(model_text).lower()
-    model_text = uniform_whitespace(model_text)
-    ngram_probabilities = get_ngram_probabilities(model_text, args.ngram_size)
+    if args.model_text:
+        model_text = [t for fn in args.model_text for t in load_text(fn)]
+        model_text = ' '.join(model_text).lower()
+        model_text = uniform_whitespace(model_text)
+        ngram_probabilities = get_ngram_probabilities(model_text,
+                                                      args.ngram_size)
+    else:
+        ngram_probabilities = load_saved_model(args.model_compiled)
 
-    raw_originals = [load_text(inf) for inf in args.input]
-    originals = list(map(uniform_whitespace, raw_originals))
-    input_text = ' '.join(originals).lower()
-    token_p = token_probability(input_text, ngram_probabilities)
-
-    p_token = [(p / (len(t) + 2), t) for t, p in token_p]
-    p_orig = []
-    start = 0
-    for orig in originals:
-        orig = orig.split()
-        end = start + len(orig)
-        p_token_chunk = p_token[start:end]
-        p_o = [(p, o) for (p, t), o in zip(p_token_chunk, orig)]
-        p_orig.append(p_o)
-        start = end
+    input_texts = (
+        text for filename in args.input
+        for text in load_text(filename)
+    )
+    token_ps = (
+        token_probability_clean(text, ngram_probabilities, args)
+        for text in input_texts
+    )
+    p_tokens = ([token_fit(p, t) for (t, p) in text
+                 if len(t) > args.min_characters]
+                for text in token_ps)
+    p_tokens_flat = (token_fit(p, t)
+                     for text in token_ps
+                     for (t, p) in text
+                     if len(t) > args.min_characters)
 
     if args.output_format == 'allterms':
-        clean_display_all(args, p_token, -args.threshold)
+        clean_display_all(args, p_tokens_flat, -args.threshold)
     elif args.output_format == 'negterms':
-        clean_display_neg(args, p_token, -args.threshold)
+        clean_display_neg(args, p_tokens_flat, -args.threshold)
     elif args.output_format == 'tagged':
-        clean_display_tagged(args, p_orig, -args.threshold)
+        clean_display_tagged(args, p_tokens, -args.threshold)
     elif args.output_format == 'stripped':
-        clean_display_stripped(args, p_orig, -args.threshold)
+        clean_display_stripped(args, p_tokens, -args.threshold)
     elif args.output_format == 'totals':
-        clean_display_totals(args, p_token, -args.threshold)
-    elif args.output_format == 'save-stripped':
-        clean_save_stripped(args, p_orig, -args.threshold)
+        clean_display_totals(args, p_tokens_flat, -args.threshold)
+    elif args.output_format == 'save':
+        clean_save_stripped(args, p_tokens, -args.threshold)
+
+def token_probability_clean(text, ngram_probabilities, args=None):
+    if args is not None:
+        if args.remove_punctuation:
+            text = strip_punctuation(text)
+        if args.remove_digits:
+            text = strip_digits(text)
+
+    return token_probability(text, ngram_probabilities)
+
+def stream_probability_clean(text, ngram_probabilities, args=None):
+    if args is not None:
+        if args.remove_punctuation:
+            text = strip_punctuation(text)
+        if args.remove_digits:
+            text = strip_digits(text)
+
+    return stream_probability(text, ngram_probabilities)
 
 def clean_display_all(args, p_token, threshold):
     print('All tokens, with log probabilities.')
@@ -502,13 +557,13 @@ def clean_display_neg(args, p_token, threshold):
 def clean_display_tagged(args, p_orig, threshold):
     for i, p_o in enumerate(p_orig):
         tokens = ['{} '.format(o.strip()) if p > threshold else
-                  '<<{}>> '.format(o.strip())
+                  '<<{}:{:6.3}>> '.format(o.strip(), p)
                   for p, o in p_o]
         text = ''.join(tokens)
+        print('Document {}:'.format(i))
+        print()
         for line in textwrap.wrap(text):
             print(line)
-        print()
-        print('Document {}:'.format(i))
         print()
 
 def clean_display_stripped(args, p_orig, threshold):
@@ -522,7 +577,7 @@ def clean_display_stripped(args, p_orig, threshold):
         print()
 
 def clean_save_stripped(args, p_orig, threshold):
-    for i, filename, p_o in enumerate(zip(args.input, p_orig)):
+    for i, (filename, p_o) in enumerate(zip(args.input, p_orig)):
         tokens = [o for p, o in p_o if p > threshold]
         text = ' '.join(tokens)
         filename, ext = os.path.splitext(filename)
@@ -533,21 +588,55 @@ def clean_save_stripped(args, p_orig, threshold):
                 out.write('\n')
 
 def clean_display_totals(args, p_token, threshold):
-    pos = [t for p, t in p_token if p > threshold]
-    neg = [t for p, t in p_token if p <= threshold]
-    pos_set = set(pos)
-    neg_set = set(neg)
+    pos_count = {}
+    neg_count = {}
+    tok_list = collections.defaultdict(list)
+    for p, t in p_token:
+        if p > threshold:
+            pos_count[t] = pos_count.get(t, 0) + 1
+        else:
+            neg_count[t] = neg_count.get(t, 0) + 1
+        tok_list[t].append(p)
+
+    tok_avg = {t: sum(p) / len(p) for t, p in tok_list.items()}
+
+    pos_set = set(pos_count)
+    neg_set = set(neg_count)
     both_set = pos_set & neg_set
     all_set = pos_set | neg_set
-    print('{} positive tokens'.format(len(pos)))
-    print('{} negative tokens'.format(len(neg)))
+
+    print('{} total tokens'.format(sum(pos_count.values()) +
+                                   sum(neg_count.values())))
+    print('{} positive tokens'.format(sum(pos_count.values())))
+    print('{} negative tokens'.format(sum(neg_count.values())))
+    print()
+
+    print('{} total types'.format(len(all_set)))
     print('{} positive types'.format(len(pos_set)))
     print('{} negative types'.format(len(neg_set)))
     print('{} overlapping types'.format(len(both_set)))
-    print('{} total types'.format(len(all_set)))
+    print()
 
-    print('Overlapping types:')
-    print('\n'.join(textwrap.wrap(' '.join(both_set))))
+    neg_sorted = sorted(neg_set, key=tok_avg.get, reverse=True)
+    neg_output = '\n'.join('{:40} {}'.format(t, tok_avg[t])
+                           for t in neg_sorted[0:200])
+    print('Most probable negative types:')
+    print(neg_output)
+    print()
+
+def save_model(args):
+    model_text = [text for fn in args.model_file for text in load_text(fn)]
+    model_text = ' '.join(model_text)
+
+    if args.lower:
+        model_text = model_text.lower()
+
+    if args.uniform_whitespace:
+        model_text = uniform_whitespace(model_text)
+
+    ngram_probabilities = get_ngram_probabilities(model_text, args.ngram_size)
+    with gzip.open(args.output, 'wt') as out:
+        json.dump(ngram_probabilities, out)
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -597,12 +686,22 @@ def parse_args():
         help='The number of characters to use for the ngram model. Defaults '
         'to 5. Models larger than 6 tend to underperform.'
     )
-    gsd_parser.add_argument(
-        '-m', '--model-file', type=str,
+
+    gsd_model_mutex = gsd_parser.add_mutually_exclusive_group(required=True)
+    gsd_model_mutex.add_argument(
+        '-m', '--model-text', type=str,
         metavar='filename', action='append', help='The name of a file with '
-        'which to analyize character n-gram frequencies. May be specified '
-        'multiple times, and must be specified at least once.'
+        'which to analyize character n-gram frequencies. May be used '
+        'multiple times, and must be used at least once unless '
+        '`--model-compiled` is used instead.'
     )
+    gsd_model_mutex.add_argument(
+        '-M', '--model-compiled', type=str,
+        metavar='filename', help='The name of a model file saved previously '
+        'using the `save` command. May not be used at the same time as '
+        '`--model-text`, and may only be used once.'
+    )
+
     gsd_parser.add_argument(
         'mystery', type=str, metavar='filename',
         help='The name of a file containing the text to be encrypted '
@@ -622,14 +721,40 @@ def parse_args():
         'to 5. Models larger than 6 tend to underperform.'
     )
     clean_parser.add_argument(
-        '-m', '--model-file', type=str,
-        metavar='filename', action='append', help='The name of a file with '
-        'which to analyize character n-gram frequencies. May be specified '
-        'multiple times, and must be specified at least once.'
+        '-c', '--min-characters', type=int, default=1,
+        metavar='number', help='The minimum number of characters a word must '
+        'have to pass. Words with fewer characters are tagged and stripped '
+        'even if they are judged to be likely words. Defaults to 1.'
     )
     clean_parser.add_argument(
+        '-p', '--remove-punctuation', action='store_true', default=False,
+        help='Replace punctuation (as defined by `string.punctuation`) with '
+        'whitespace prior to processing.'
+    )
+    clean_parser.add_argument(
+        '-d', '--remove-digits', action='store_true', default=False,
+        help='Replace digits with whitespace prior to processing.'
+    )
+
+    clean_model_mutex = clean_parser.add_mutually_exclusive_group(required=True)
+    clean_model_mutex.add_argument(
+        '-m', '--model-text', type=str,
+        metavar='filename', action='append', help='The name of a file with '
+        'which to analyize character n-gram frequencies. May be used '
+        'multiple times, and must be used at least once unless '
+        '`--model-compiled` is used instead.'
+    )
+    clean_model_mutex.add_argument(
+        '-M', '--model-compiled', type=str,
+        metavar='filename', help='The name of a model file saved previously '
+        'using the `save` command. May not be used at the same time as '
+        '`--model-text`, and may only be used once.'
+    )
+
+    clean_parser.add_argument(
         '-o', '--output-format', type=str, default='tagged',
-        choices=['allterms', 'negterms', 'totals', 'tagged', 'stripped'],
+        choices=['allterms', 'negterms', 'totals',
+                 'tagged', 'stripped', 'save'],
         help='The output to generate. `allterms` displays all terms with '
         'negative terms marked. `negterms` displays only negative (non-word) '
         'terms, sorted from most to least likely. `tagged` displays the input '
@@ -637,7 +762,7 @@ def parse_args():
         '`stripped` displays the input text with negative terms removed.'
     )
     clean_parser.add_argument(
-        '-t', '--threshold', type=float, default=3.25,
+        '-t', '--threshold', type=float, default=4,
         help='The likelihood threshold to be used for evaluation.'
     )
     clean_parser.add_argument(
@@ -650,7 +775,7 @@ def parse_args():
     save_parser = commands.add_parser(
         'save', conflict_handler='resolve',
         help='Save an efficient copy of a Naive Bayes character '
-        'sequence model'
+        'sequence model.'
     )
     save_parser.add_argument(
         '-m', '--model-file', type=str,
@@ -659,9 +784,30 @@ def parse_args():
         'multiple times, and must be specified at least once.'
     )
     save_parser.add_argument(
+        '-l', '--lower', action='store_true', default=False,
+        help='Convert all characters to lowercase before saving. Models that '
+        'use only lower-case characters have better performance given the '
+        'same number of characters, but they cannot handle capitalization '
+        'gracefully, and so can only be used on input texts that have '
+        'also been converted.'
+    )
+    save_parser.add_argument(
+        '-w', '--uniform-whitespace', action='store_true', default=False,
+        help='Make all whitespace uniform before saving. All whitespace '
+        'characters or strings of whitespace-only characters will be '
+        'replaced with a single space.'
+    )
+    save_parser.add_argument(
+        '-n', '--ngram-size', type=int, default=5,
+        metavar='number', choices=[2, 3, 4, 5, 6],
+        help='The number of characters to use for the ngram model. Defaults '
+        'to 5. Models larger than 6 tend to underperform.'
+    )
+    save_parser.add_argument(
         'output', type=str, metavar='filename',
         help='The name of the model save file.'
     )
+    save_parser.set_defaults(command=save_model)
 
     return parser.parse_args()
 
