@@ -8,6 +8,7 @@ import re
 import string
 import argparse
 import textwrap
+import functools
 import os
 import gzip
 import json
@@ -111,26 +112,22 @@ def count_ngrams(seq, n=3):
     ngrams = (seq[i:i + n] for i in range(len(seq) - n + 1))
     return dict(collections.Counter(ngrams))
 
-def token_probability(text, ngram_probabilities):
-    text = uniform_whitespace(text)
-    text = text.split()
-
+def single_token_probability_func(ngram_probabilities, cache_size=2 ** 14):
     ngram_max = len(ngram_probabilities)
-    pvals = []
-    tokens = []
-    for raw_token in text:
+
+    # TODO: Test to see whether caching really helps. Also look at
+    #       https://github.com/pbrady/fastcache for a potential speedup.
+    @functools.lru_cache(maxsize=cache_size)
+    def token_p(raw_token):
         # Add whitespace to mark beginning of token.
         token = ' {}'.format(raw_token.strip().lower())
         ngram_p = 0
         for end in range(2, len(token) + 1):
             start = max(0, end - ngram_max)
             ngram_p += lookup_ngram(token[start:end], ngram_probabilities)
-        pvals.append(ngram_p)
+        return raw_token, ngram_p
 
-        # Remove initial space (but leave final space).
-        tokens.append(raw_token)
-
-    return [(t, p) for t, p in zip(tokens, pvals) if t.strip()]
+    return token_p
 
 def stream_probability(text, ngram_probabilities):
     text = uniform_whitespace(text)
@@ -491,14 +488,21 @@ def clean(args):
     else:
         ngram_probabilities = load_saved_model(args.model_compiled)
 
+    # Create the function for calculating the token probability based on
+    # the given ngrams. This will be passed as a callback to
+    # `text_token_probability`.
+    token_probability = single_token_probability_func(ngram_probabilities)
+
     input_texts = (
-        text for filename in args.input
+        text_token_probability_prep(text, args) for filename in args.input
         for text in load_text(filename)
     )
+
     token_ps = (
-        token_probability_clean(text, ngram_probabilities, args)
+        text_token_probability(text, token_probability)
         for text in input_texts
     )
+
     p_tokens = ([token_fit(p, t) for (t, p) in text
                  if len(t) > args.min_characters]
                 for text in token_ps)
@@ -520,14 +524,18 @@ def clean(args):
     elif args.output_format == 'save':
         clean_save_stripped(args, p_tokens, -args.threshold)
 
-def token_probability_clean(text, ngram_probabilities, args=None):
-    if args is not None:
-        if args.remove_punctuation:
-            text = strip_punctuation(text)
-        if args.remove_digits:
-            text = strip_digits(text)
+def text_token_probability_prep(text, args):
+    if args.remove_punctuation:
+        text = strip_punctuation(text)
+    if args.remove_digits:
+        text = strip_digits(text)
+    return text
 
-    return token_probability(text, ngram_probabilities)
+def text_token_probability(text, tkp_func):
+    text = uniform_whitespace(text)
+    text = text.split()
+    tokens_pvals = (tkp_func(token) for token in text)
+    return [(t, p) for t, p in tokens_pvals if t.strip()]
 
 def stream_probability_clean(text, ngram_probabilities, args=None):
     if args is not None:
@@ -809,11 +817,14 @@ def parse_args():
     )
     save_parser.set_defaults(command=save_model)
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if hasattr(args, 'command'):
+        args.command(args)
+    else:
+        parser.print_help()
 
 def main(argv):
-    args = parse_args()
-    args.command(args)
+    parse_args()
 
 if __name__ == '__main__':
     main(sys.argv)
