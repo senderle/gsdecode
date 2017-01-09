@@ -34,29 +34,28 @@ $ cat mysteries/mystery5.txt
 I shoot the hippopotamous with bullets made of platinum
 because if I use leaden ones his hide is sure to flatten em.
 
-$ pypy gsdecode.py -m models/rasselas.ascii.upper.txt -d 10 -c 100 mysteries/mystery5.txt 
+$ pypy3 gsdecode.py decode -m models/middlemarch.txt -d 10 -c 100 mysteries/mystery5.txt
 ```
 [... Many lines of output here... ]
 
 Final output:
 
 ```
-Hill climbing key: 
+******************
+** Final result **
+******************
 
-['w', 'o', "'", 'h', 'X', ';', 'J', '!', 'P', 'r', 'p', 'u', '"', 
- 'A', 'f', 'q', 'n', 'v', 'Y', 'L', 'V', 'D', 'z', 'Z', 'H', '\n', 
- 's', 'a', 'b', 'l', ',', 'G', 'K', 'C', 'O', 'M', 'N', 'W', 'x', 
- '_', 'S', 'Q', 'y', ' ', 'g', 'R', 'j', ')', 'T', 'U', 'e', 'E', 
- 'I', 'm', '.', 'k', 'c', '-', 'B', 'i', 'd', ':', '?', 'F', '(', 
- 't']
+Most probable key: 
 
-Hill climbing key output: 
+['q', ' ', '0', 'B', 'c', 'v', 'f', 'Z', 'G', 'X', '&', '8', '!', 'V', 'r', 't', 's', 'K', 'a', 'D', ']', 'm', ')', 'k', 'J', 'N', '5', '1', 'p', 'F', '_', 'U', 'Y', 'j', 'M', '9', '.', 'L', 'i', 'R', 'C', 'n', '2', '6', 'y', 'u', 'g', ',', 'W', '?', '\n', 'H', 'Q', 'l', 'w', '(', 'h', 'o', 'S', 'A', ';', "'", '3', 'd', 'e', 'I', 'O', 'P', 'x', '-', 'T', ':', '7', 'E', 'z', '[', '"', 'b']
 
-y shoot the hippopotamous with rullets made of platinum
-recause if y use leaden ones his hide is sube to flatten em,
+Most probable key output: 
+
+I shoot the hippopotamous with bullets made of platinum
+because if I use leaden ones his hide is sure to flatten em.
 
 
-Hill climbing key log probability, total and per character: 
+Most probable key log probability, total and per character: 
 
--274.614803669 -2.34713507409
+-256.60309431622267, -2.1931888403095954
 ```
